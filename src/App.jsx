@@ -1,191 +1,165 @@
-import { useState } from "react";
-import { Sparkles, RefreshCw, Target, FileText, Download, RotateCcw, Printer, Zap, Layout, History, AlertCircle, PenTool, Cloud, Linkedin, ChevronRight } from "lucide-react";
+import { useState, useRef } from "react";
+import { Sparkles, RefreshCw, Zap, Moon, Sun, Upload, FileText, Check, Printer, Eye, Edit3, Target, Cloud, Linkedin, History } from "lucide-react";
 
-// ── DESIGN TOKENS ────────────────────────────────────────────────────────────
-const C = {
-  bg:"#F1F5F9", surface:"#FFFFFF", border:"#E2E8F0",
-  text:"#0F172A", textDim:"#475569",
-  green:"#16A34A", greenBg:"#F0FDF4",
-  red:"#DC2626", redBg:"#FEF2F2",
-  amber:"#B45309", blue: "#2563EB", blueBg: "#EFF6FF",
-  purple: "#7C3AED", purpleBg: "#F5F3FF",
-  linkedin: "#0A66C2", linkedinBg: "#EEF3F8"
+// ── THEME CONFIG ─────────────────────────────────────────────────────────────
+const THEMES = {
+  dark: {
+    bg: "linear-gradient(135deg, #0F172A 0%, #1E293B 100%)",
+    surface: "rgba(255, 255, 255, 0.03)",
+    border: "rgba(255, 255, 255, 0.1)",
+    text: "#F8FAFC",
+    textDim: "#94A3B8",
+    accent: "#38BDF8",
+    canvas: "#0F172A"
+  },
+  light: {
+    bg: "#F1F5F9",
+    surface: "#FFFFFF",
+    border: "#E2E8F0",
+    text: "#0F172A",
+    textDim: "#64748B",
+    accent: "#0284C7",
+    canvas: "#F8FAFC"
+  }
 };
 
-const VIBES = [
-  { id:"finance", label:"Finance", color:"#B45309", persona: "CFO-level focus on EBITDA" },
-  { id:"strategy", label:"Strategy", color:"#7C3AED", persona: "CPO-level focus on market moats" },
-  { id:"ops", label:"Operations", color:"#0E7490", persona: "COO-level focus on unit economics" }
-];
-
-const SAMPLE_RESUME = {
-  name:"Jordan Reyes",
-  contact:"jordan.reyes@email.com · New York, NY",
-  summary:"Product leader with 7 years of experience building software products.",
-  roles:[
-    { title:"Senior Product Manager", company:"Apex Technologies", dates:"2021–Present", 
-      bullets:["Led a team of 12 to improve the core checkout flow","Worked with engineering to build a recommendation engine"] }
-  ]
-};
-
-// ── HELPERS ──────────────────────────────────────────────────────────────────
-function exportPdf(content) {
-  const win = window.open("", "_blank");
-  win.document.write(`<html><body style="font-family:sans-serif;padding:50px;line-height:1.6;color:#334155;">${content}</body></html>`);
-  win.document.close(); win.print();
-}
-
-// ── MAIN APP ──────────────────────────────────────────────────────────────────
 export default function VibeShiftPro() {
-  const [activeVibe, setActiveVibe] = useState(0);
-  const [view, setView] = useState("editor"); 
-  const [resume, setResume] = useState(SAMPLE_RESUME);
-  const [transformed, setTransformed] = useState(null);
-  const [coverLetter, setCoverLetter] = useState("");
-  const [linkedin, setLinkedin] = useState({ headline: "", about: "" });
+  const [isDark, setIsDark] = useState(true);
+  const [isPreview, setIsPreview] = useState(false);
+  const [resume, setResume] = useState(null);
   const [jdText, setJdText] = useState("");
   const [loading, setLoading] = useState(false);
-  const [history, setHistory] = useState([]);
-  const [analysis, setAnalysis] = useState(null);
+  const [transformed, setTransformed] = useState(null);
+  const [view, setView] = useState("editor");
 
-  const handleAIGenerate = async (type) => {
-    if (!jdText) return alert("Please paste a Job Description first!");
+  const t = isDark ? THEMES.dark : THEMES.light;
+  const fileInputRef = useRef(null);
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target.result;
+      const lines = text.split("\n").filter(l => l.trim());
+      setResume({ 
+        name: file.name, 
+        contact: lines[1] || "Contact Info Not Found", 
+        summary: lines[2] || text.substring(0, 200), 
+        roles: [{ title: "Work Experience", bullets: lines.slice(3, 8) }] 
+      });
+    };
+    reader.readAsText(file);
+  };
+
+  const handleAIGenerate = async () => {
+    if (!resume || !jdText) return alert("Upload a resume and paste a JD first!");
     setLoading(true);
-
-    // PASTE YOUR GEMINI API KEY BELOW
-    const API_KEY = "AIzaSyA1FGzoGe6QBKqsMHSzmWuIb9lX8IOFmi0"; 
+    const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
     const URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
-
-    const vibe = VIBES[activeVibe];
-    let prompt = "";
-
-    if (type === "resume") {
-      prompt = `Analyze JD: ${jdText}. Match with Resume: ${JSON.stringify(resume)}. 
-                1. Extract top keywords. 2. Inject into resume with metrics. 
-                3. Perform Title Match Check. 4. Persona: ${vibe.label}.
-                Output JSON: {"summary":"","roles":[{"bullets":[""]}],"missingKeywords":[],"atsScore":0,"wordCount":0,"titleMatch":false}`;
-    } else if (type === "linkedin") {
-      prompt = `Create a LinkedIn Headline and About section for this resume: ${JSON.stringify(transformed || resume)}. 
-                Targeting JD: ${jdText}. Vibe: ${vibe.label}. Output JSON: {"headline": "", "about": ""}`;
-    } else {
-      prompt = `Write a cover letter for JD: ${jdText} based on resume: ${JSON.stringify(transformed || resume)}. 
-                Output JSON: {"letter": ""}`;
-    }
-
+    
     try {
       const resp = await fetch(URL, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" } })
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: `Match this resume to this JD: ${jdText}. Resume: ${JSON.stringify(resume)}. Output JSON: {"summary":"","roles":[{"bullets":[""]}]}` }] }],
+          generationConfig: { responseMimeType: "application/json" }
+        })
       });
       const data = await resp.json();
       const result = JSON.parse(data.candidates[0].content.parts[0].text);
-      
-      if (type === "resume") {
-        setTransformed({ ...resume, ...result });
-        setAnalysis(result);
-        setHistory([{ company: "VibeShift Scan", score: result.atsScore, date: new Date().toLocaleDateString(), vibe: vibe.label }, ...history]);
-      } else if (type === "linkedin") {
-        setLinkedin(result);
-        setView("linkedin");
-      } else {
-        setCoverLetter(result.letter);
-        setView("coverletter");
-      }
-    } catch (err) { console.error(err); alert("AI Error: Check key or console."); } finally { setLoading(false); }
+      setTransformed(result);
+    } catch (err) { console.error(err); } finally { setLoading(false); }
   };
 
   return (
-    <div style={{ minHeight:"100vh", background:C.bg, fontFamily:"sans-serif" }}>
-      {/* GLOBAL NAVIGATION */}
-      <div style={{ background:C.text, color:"#FFF", padding:"12px 24px", display:"flex", gap:15, alignItems:"center", position: "sticky", top: 0, zIndex: 100 }}>
-        <h2 style={{ fontSize:15, fontWeight:900, margin:"0 20px 0 0", color: VIBES[activeVibe].color }}>VIBESHIFT PRO</h2>
-        <button onClick={()=>setView("editor")} style={{ background:"none", border:"none", color:view==="editor"?"#FFF":C.textDim, cursor:"pointer", fontSize:11, fontWeight:700 }}>Alignment</button>
-        <button onClick={()=>setView("cloud")} style={{ background:"none", border:"none", color:view==="cloud"?"#FFF":C.textDim, cursor:"pointer", fontSize:11, fontWeight:700 }}>Skills Cloud</button>
-        <button onClick={()=>setView("linkedin")} style={{ background:"none", border:"none", color:view==="linkedin"?"#FFF":C.textDim, cursor:"pointer", fontSize:11, fontWeight:700 }}>LinkedIn Sync</button>
-        <button onClick={()=>setView("coverletter")} style={{ background:"none", border:"none", color:view==="coverletter"?"#FFF":C.textDim, cursor:"pointer", fontSize:11, fontWeight:700 }}>Cover Letter</button>
-        <button onClick={()=>setView("sanitizer")} style={{ background:"none", border:"none", color:view==="sanitizer"?"#FFF":C.textDim, cursor:"pointer", fontSize:11, fontWeight:700 }}>Sanitizer</button>
-        <button onClick={()=>setView("history")} style={{ background:"none", border:"none", color:view==="history"?"#FFF":C.textDim, cursor:"pointer", fontSize:11, fontWeight:700 }}>Tracker</button>
-      </div>
-
-      <div style={{ maxWidth:1300, margin:"20px auto", display:"grid", gridTemplateColumns: (view === "editor" || view === "cloud" || view === "linkedin") ? "350px 1fr" : "1fr", gap:20, padding: "0 20px" }}>
+    <div style={{ 
+      width: "100vw", 
+      height: "100vh", 
+      background: t.bg, 
+      color: t.text, 
+      display: "flex", 
+      flexDirection: "column", 
+      overflow: "hidden", 
+      transition: "all 0.3s ease",
+      position: "fixed",
+      top: 0,
+      left: 0
+    }}>
+      
+      {/* Edge-to-Edge Header */}
+      <header style={{ padding: "0 40px", minHeight: "70px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${t.border}`, background: "rgba(0,0,0,0.1)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <Zap size={22} color={t.accent} fill={t.accent} />
+          <h1 style={{ fontSize: 18, fontWeight: 900, letterSpacing: "-0.5px", margin: 0 }}>VIBESHIFT <span style={{ color: t.accent }}>PRO</span></h1>
+        </div>
         
-        {/* INPUTS PANEL */}
-        {(view === "editor" || view === "cloud" || view === "linkedin") && (
-          <div style={{ background:"#FFF", borderRadius:12, padding:25, boxShadow:"0 4px 15px rgba(0,0,0,0.05)", height: "fit-content" }}>
-            <p style={{ fontSize:10, fontWeight:700, color:C.textDim, marginBottom:8 }}>PASTE JOB DESCRIPTION</p>
-            <textarea value={jdText} onChange={(e)=>setJdText(e.target.value)} placeholder="Paste JD here..." style={{ width:"100%", height:150, borderRadius:8, border:`1px solid ${C.border}`, padding:12, fontSize:12, marginBottom:20 }} />
-            <p style={{ fontSize:10, fontWeight:700, color:C.textDim, marginBottom:8 }}>SELECT TARGET VIBE</p>
-            <div style={{ display:"flex", gap:5, marginBottom:20 }}>
-              {VIBES.map((v, i) => (
-                <button key={v.id} onClick={()=>setActiveVibe(i)} style={{ flex:1, padding:8, borderRadius:6, border:`1px solid ${activeVibe===i?v.color:C.border}`, background:activeVibe===i?`${v.color}10`:"#FFF", color:activeVibe===i?v.color:C.textDim, cursor:"pointer", fontWeight:700, fontSize:10 }}>{v.label}</button>
-              ))}
-            </div>
-            <button onClick={()=>handleAIGenerate("resume")} disabled={loading} style={{ width:"100%", padding:14, background:C.blue, color:"#FFF", border:"none", borderRadius:10, fontWeight:700, cursor:"pointer", marginBottom:10 }}>{loading ? <RefreshCw size={18} className="spin" /> : <Zap size={18}/>} ATS Scan & Align</button>
-            <button onClick={()=>handleAIGenerate("linkedin")} disabled={loading} style={{ width:"100%", padding:12, background:C.linkedin, color:"#FFF", border:"none", borderRadius:10, fontWeight:700, cursor:"pointer", marginBottom:10 }}>Sync LinkedIn</button>
-            <button onClick={()=>handleAIGenerate("letter")} disabled={loading} style={{ width:"100%", padding:12, background:C.purple, color:"#FFF", border:"none", borderRadius:10, fontWeight:700, cursor:"pointer" }}>Write Cover Letter</button>
+        <div style={{ display: "flex", gap: 30, alignItems: "center" }}>
+          <div style={{ display: "flex", background: t.surface, borderRadius: 10, padding: 4, border: `1px solid ${t.border}` }}>
+            <button onClick={() => setIsPreview(false)} style={{ padding: "6px 16px", borderRadius: 8, background: !isPreview ? t.accent : "transparent", color: !isPreview ? "#FFF" : t.textDim, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}><Edit3 size={14}/> Editor</button>
+            <button onClick={() => setIsPreview(true)} style={{ padding: "6px 16px", borderRadius: 8, background: isPreview ? t.accent : "transparent", color: isPreview ? "#FFF" : t.textDim, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}><Eye size={14}/> Preview</button>
           </div>
+          <button onClick={() => setIsDark(!isDark)} style={{ background: t.surface, border: `1px solid ${t.border}`, color: t.text, padding: 10, borderRadius: "50%", cursor: "pointer", display: "flex" }}>{isDark ? <Sun size={18}/> : <Moon size={18}/>}</button>
+        </div>
+      </header>
+
+      {/* Main Grid: 380px Sidebar | Flexible Canvas | 320px Analytics */}
+      <main style={{ flex: 1, display: "grid", gridTemplateColumns: isPreview ? "1fr" : "400px 1fr 350px", overflow: "hidden" }}>
+        
+        {/* Sidebar Inputs */}
+        {!isPreview && (
+          <aside style={{ padding: 30, borderRight: `1px solid ${t.border}`, overflowY: "auto", background: "rgba(0,0,0,0.05)" }}>
+            <div onClick={() => fileInputRef.current.click()} style={{ padding: 30, border: `2px dashed ${t.border}`, borderRadius: 20, textAlign: "center", cursor: "pointer", background: t.surface }}>
+              <input type="file" ref={fileInputRef} hidden onChange={handleFileUpload} accept=".txt,.md" />
+              <Upload size={24} color={t.accent} style={{ marginBottom: 10 }} />
+              <p style={{ fontSize: 13, fontWeight: 700, margin: 0 }}>{resume ? resume.name : "Upload Resume (.txt)"}</p>
+            </div>
+            
+            <div style={{ marginTop: 30 }}>
+              <p style={{ fontSize: 10, fontWeight: 800, color: t.textDim, marginBottom: 10, letterSpacing: 1 }}>JOB DESCRIPTION</p>
+              <textarea value={jdText} onChange={(e)=>setJdText(e.target.value)} placeholder="Paste the job posting here..." style={{ width: "100%", height: 250, background: t.surface, border: `1px solid ${t.border}`, borderRadius: 12, padding: 15, color: t.text, fontSize: 13, outline: "none", lineHeight: 1.6 }} />
+            </div>
+
+            <button onClick={handleAIGenerate} disabled={loading} style={{ width: "100%", marginTop: 25, padding: 16, background: t.accent, color: "#FFF", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+              {loading ? <RefreshCw className="spin" size={20}/> : <Sparkles size={20}/>} {loading ? "OPTIMIZING..." : "RUN ATS SCAN"}
+            </button>
+          </aside>
         )}
 
-        {/* OUTPUT PANEL */}
-        <div style={{ background:"#FFF", borderRadius:12, padding:30, boxShadow:"0 4px 15px rgba(0,0,0,0.05)" }}>
-          {view === "editor" && (
+        {/* Flexible Canvas */}
+        <section style={{ padding: isPreview ? "60px 0" : "40px", overflowY: "auto", background: t.canvas, display: "flex", justifyContent: "center" }}>
+          <div style={{ 
+            width: "100%", 
+            maxWidth: isPreview ? "850px" : "800px", 
+            background: "#FFF", 
+            color: "#1E293B", 
+            padding: "80px", 
+            borderRadius: isPreview ? "0" : "8px", 
+            boxShadow: isPreview ? "none" : "0 30px 60px rgba(0,0,0,0.15)", 
+            minHeight: "1120px", /* A4 Portrait Ratio Approx */
+            transition: "all 0.3s ease"
+          }}>
+            <h1 style={{ margin: 0, fontSize: 36, fontWeight: 900, letterSpacing: "-1px" }}>{resume ? resume.name.split('.')[0].toUpperCase() : "JORDAN REYES"}</h1>
+            <p style={{ color: "#64748B", marginBottom: 50, fontSize: 14 }}>{resume?.contact || "jordan.reyes@email.com · New York, NY"}</p>
+            
+            <div style={{ marginBottom: 40 }}>
+              <h4 style={{ borderBottom: "1px solid #E2E8F0", paddingBottom: 8, fontSize: 12, color: t.accent, fontWeight: 800, letterSpacing: 1 }}>EXECUTIVE SUMMARY</h4>
+              <p style={{ lineHeight: 1.8, fontSize: 15, color: "#334155" }}>{transformed ? transformed.summary : (resume?.summary || "Product leader with 7 years of experience building software products...")}</p>
+            </div>
+
             <div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 20 }}>
-                <h3 style={{ margin: 0, fontSize: 14 }}>Resume Preview</h3>
-                {transformed && <button onClick={()=>exportPdf(`<h1>${transformed.name}</h1><p>${transformed.summary}</p>`)} style={{ background:C.text, color:"#FFF", border:"none", padding:"6px 12px", borderRadius:6, fontSize:11, cursor:"pointer" }}>Print PDF</button>}
-              </div>
-              <div style={{ border: `1px solid ${C.border}`, padding: 25, borderRadius: 10 }}>
-                <h2>{resume.name}</h2>
-                <p style={{ lineHeight: 1.6 }}>{transformed ? transformed.summary : resume.summary}</p>
-              </div>
+              <h4 style={{ borderBottom: "1px solid #E2E8F0", paddingBottom: 8, fontSize: 12, color: t.accent, fontWeight: 800, letterSpacing: 1 }}>PROFESSIONAL EXPERIENCE</h4>
+              <p style={{ fontWeight: 800, marginTop: 20, marginBottom: 5, fontSize: 15 }}>Senior Product Manager | Apex Technologies</p>
+              <ul style={{ paddingLeft: 20, color: "#334155", lineHeight: 1.8 }}>
+                {(transformed || resume)?.roles?.[0].bullets.map((b, i) => (
+                  <li key={i} style={{ marginBottom: 10 }}>{b}</li>
+                )) || <li>Led a team of 12 to improve the core checkout flow.</li>}
+              </ul>
             </div>
-          )}
+          </div>
+        </section>
 
-          {view === "cloud" && (
-            <div style={{ textAlign: "center", padding: 40 }}>
-              <h3 style={{ fontSize: 14, color: C.textDim, marginBottom: 30 }}>Skills Cloud Analysis</h3>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 15, justifyContent: "center" }}>
-                {analysis?.missingKeywords.map((k, i) => (
-                  <span key={k} style={{ fontSize: 14 + (i * 3), color: C.blue, fontWeight: 700, background: C.blueBg, padding: "8px 16px", borderRadius: 20 }}>{k}</span>
-                )) || <p>Scan a JD to see keywords.</p>}
-              </div>
-            </div>
-          )}
-
-          {view === "linkedin" && (
-            <div style={{ background: C.linkedinBg, padding: 25, borderRadius: 12 }}>
-              <p style={{ fontSize: 10, fontWeight: 800, color: C.linkedin }}>HEADLINE</p>
-              <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 20 }}>{linkedin.headline || "Generate sync data..."}</div>
-              <p style={{ fontSize: 10, fontWeight: 800, color: C.linkedin }}>ABOUT (BIO)</p>
-              <div style={{ lineHeight: 1.8, fontSize: 14 }}>{linkedin.about}</div>
-            </div>
-          )}
-
-          {view === "coverletter" && (
-            <div style={{ whiteSpace: "pre-wrap", background: C.purpleBg, padding: 30, borderRadius: 10, fontSize: 14, lineHeight: 1.8 }}>
-              {coverLetter || "Generate a letter in the sidebar."}
-            </div>
-          )}
-
-          {view === "sanitizer" && (
-            <div style={{ background: "#000", color: "#0F0", padding: 20, borderRadius: 8, fontFamily: "monospace", fontSize: 12 }}>
-              {resume.name.toUpperCase()}{"\n"}{resume.contact}{"\n\n"}ATS_TEXT_STREAM:{"\n"}{transformed?.summary || resume.summary}
-            </div>
-          )}
-
-          {view === "history" && (
-            <div>
-              <h3 style={{ fontSize: 14 }}>Application Tracker</h3>
-              {history.map((h, i) => (
-                <div key={i} style={{ padding: 15, borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between" }}>
-                  <strong>{h.company}</strong> <span style={{ color: C.green }}>{h.score}% Match</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-      <style>{`.spin { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </div>
-  );
-}
+        {/* Analytics Sidebar */}
+        {!isPreview && (
+          <aside style={{ padding: 30, borderLeft: `1px solid ${t.border}`, background: "rgba(0,0,0,0.05)", overflowY: "auto" }}></aside>
