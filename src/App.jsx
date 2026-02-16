@@ -1,22 +1,34 @@
 import { useState, useRef, useEffect } from "react";
-import { Sparkles, RefreshCw, Zap, Moon, Sun, Upload, FileText, Check, Eye, Edit3, Target, Printer, Download } from "lucide-react";
+import { Sparkles, RefreshCw, Zap, Moon, Sun, Upload, FileText, Check, Eye, Edit3, Download, Printer } from "lucide-react";
 import * as pdfjsLib from 'pdfjs-dist';
+import mammoth from "mammoth";
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
 
-// Set PDF.js Worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.js`;
 
-// ── THEMES ──────────────────────────────────────────────────────────────────
 const THEMES = {
   dark: { bg: "linear-gradient(135deg, #0F172A 0%, #1E293B 100%)", surface: "rgba(255, 255, 255, 0.03)", border: "rgba(255, 255, 255, 0.1)", text: "#F8FAFC", textDim: "#94A3B8", accent: "#38BDF8", canvas: "#0F172A" },
   light: { bg: "#F1F5F9", surface: "#FFFFFF", border: "#E2E8F0", text: "#0F172A", textDim: "#64748B", accent: "#0284C7", canvas: "#F8FAFC" }
 };
 
 export default function VibeShiftPro() {
-  // --- FORCE FULL WINDOW CSS ---
+  const [isDark, setIsDark] = useState(true);
+  const [isPreview, setIsPreview] = useState(false);
+  const [resume, setResume] = useState(null);
+  const [jdText, setJdText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [transformed, setTransformed] = useState(null);
+  const [analysis, setAnalysis] = useState(null);
+  
+  const resumeRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const t = isDark ? THEMES.dark : THEMES.light;
+
   useEffect(() => {
     const style = document.createElement('style');
     style.innerHTML = `
-      #root, body, html { margin: 0 !important; padding: 0 !important; width: 100vw !important; height: 100vh !important; max-width: none !important; overflow: hidden !important; background: #0F172A; }
+      #root, body, html { margin: 0 !important; padding: 0 !important; width: 100vw !important; height: 100vh !important; overflow: hidden !important; }
       * { box-sizing: border-box; }
       .spin { animation: spin 1s linear infinite; }
       @keyframes spin { to { transform: rotate(360deg); } }
@@ -25,58 +37,42 @@ export default function VibeShiftPro() {
     return () => document.head.removeChild(style);
   }, []);
 
-  const [isDark, setIsDark] = useState(true);
-  const [isPreview, setIsPreview] = useState(false);
-  const [resume, setResume] = useState(null);
-  const [jdText, setJdText] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [transformed, setTransformed] = useState(null);
-  const [analysis, setAnalysis] = useState(null);
-
-  const t = isDark ? THEMES.dark : THEMES.light;
-  const fileInputRef = useRef(null);
-
-  // --- PDF & TEXT UPLOAD HANDLER ---
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
     const reader = new FileReader();
-    
-    if (file.type === "application/pdf") {
-      reader.onload = async (event) => {
-        try {
+
+    try {
+      if (file.type === "application/pdf") {
+        reader.onload = async (event) => {
           const typedarray = new Uint8Array(event.target.result);
           const pdf = await pdfjsLib.getDocument(typedarray).promise;
-          let fullText = "";
+          let text = "";
           for (let i = 1; i <= pdf.numPages; i++) {
             const page = await pdf.getPage(i);
-            const textContent = await page.getTextContent();
-            fullText += textContent.items.map(item => item.str).join(" ") + "\n";
+            const content = await page.getTextContent();
+            text += content.items.map(item => item.str).join(" ") + "\n";
           }
-          setResume({ name: file.name, raw: fullText, summary: fullText.substring(0, 500) });
-        } catch (err) { alert("Error parsing PDF. Try a .txt file."); }
-      };
-      reader.readAsArrayBuffer(file);
-    } else {
-      reader.onload = (event) => {
-        const text = event.target.result;
-        setResume({ name: file.name, raw: text, summary: text.substring(0, 500) });
-      };
-      reader.readAsText(file);
-    }
+          setResume({ name: file.name, raw: text });
+        };
+        reader.readAsArrayBuffer(file);
+      } else if (file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+        reader.onload = async (event) => {
+          const result = await mammoth.extractRawText({ arrayBuffer: event.target.result });
+          setResume({ name: file.name, raw: result.value });
+        };
+        reader.readAsArrayBuffer(file);
+      } else {
+        reader.onload = (event) => setResume({ name: file.name, raw: event.target.result });
+        reader.readAsText(file);
+      }
+    } catch (err) { alert("Format not supported."); }
   };
 
   const handleAIGenerate = async () => {
-    if (!resume || !jdText) return alert("Upload a resume and paste a Job Description!");
+    if (!resume || !jdText) return alert("Upload resume and paste JD!");
     setLoading(true);
-    
     const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-    if (!API_KEY) {
-      alert("API Key not found in Environment Variables.");
-      setLoading(false); return;
-    }
-
     const URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
     
     try {
@@ -84,82 +80,77 @@ export default function VibeShiftPro() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: `Task: Optimize this resume for this JD: ${jdText}. Resume: ${resume.raw}. 
-          Return ONLY raw JSON: {"summary": "string", "atsScore": 85, "keywords": []}` }] }],
+          contents: [{ parts: [{ text: `Optimize this resume for this JD: ${jdText}. Resume: ${resume.raw}. Return ONLY raw JSON: {"summary": "", "atsScore": 85}` }] }],
         })
       });
-      
       const data = await resp.json();
-      let rawJson = data.candidates[0].content.parts[0].text;
-      rawJson = rawJson.replace(/```json/g, "").replace(/```/g, "").trim();
+      let rawJson = data.candidates[0].content.parts[0].text.replace(/```json/g, "").replace(/```/g, "").trim();
       const result = JSON.parse(rawJson);
       setTransformed(result);
       setAnalysis(result);
-    } catch (err) { alert("AI Error. Check console."); } finally { setLoading(false); }
+    } catch (err) { alert("AI Error. Check key."); } finally { setLoading(false); }
+  };
+
+  // ── PDF DOWNLOAD LOGIC ──
+  const downloadPDF = async () => {
+    const element = resumeRef.current;
+    const canvas = await html2canvas(element, { scale: 2 });
+    const imgData = canvas.toDataURL("image/png");
+    const pdf = new jsPDF("p", "mm", "a4");
+    const imgProps = pdf.getImageProperties(imgData);
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+    pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
+    pdf.save("Optimized_Resume.pdf");
   };
 
   return (
-    <div style={{ width: "100vw", height: "100vh", background: t.bg, color: t.text, display: "flex", flexDirection: "column", position: "fixed", top: 0, left: 0 }}>
+    <div style={{ width: "100vw", height: "100vh", background: t.bg, color: t.text, display: "flex", flexDirection: "column", position: "fixed" }}>
       
-      {/* HEADER */}
-      <header style={{ padding: "0 40px", height: "70px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${t.border}`, background: "rgba(0,0,0,0.1)", zIndex: 10 }}>
+      <header style={{ padding: "0 40px", height: "70px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${t.border}`, background: "rgba(0,0,0,0.1)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <Zap size={22} color={t.accent} fill={t.accent} />
           <h1 style={{ fontSize: 18, fontWeight: 900, margin: 0 }}>VIBESHIFT PRO</h1>
         </div>
         
-        <div style={{ display: "flex", gap: 20, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 15, alignItems: "center" }}>
           <div style={{ display: "flex", background: t.surface, borderRadius: 10, padding: 4, border: `1px solid ${t.border}` }}>
-            <button onClick={() => setIsPreview(false)} style={{ padding: "6px 16px", borderRadius: 8, background: !isPreview ? t.accent : "transparent", color: !isPreview ? "#FFF" : t.textDim, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Editor</button>
-            <button onClick={() => setIsPreview(true)} style={{ padding: "6px 16px", borderRadius: 8, background: isPreview ? t.accent : "transparent", color: isPreview ? "#FFF" : t.textDim, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Preview</button>
+            <button onClick={() => setIsPreview(false)} style={{ padding: "6px 12px", borderRadius: 8, background: !isPreview ? t.accent : "transparent", color: !isPreview ? "#FFF" : t.textDim, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Editor</button>
+            <button onClick={() => setIsPreview(true)} style={{ padding: "6px 12px", borderRadius: 8, background: isPreview ? t.accent : "transparent", color: isPreview ? "#FFF" : t.textDim, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Preview</button>
           </div>
-          <button onClick={() => setIsDark(!isDark)} style={{ background: t.surface, border: `1px solid ${t.border}`, color: t.text, padding: 8, borderRadius: "50%", cursor: "pointer", display: "flex" }}>
-            {isDark ? <Sun size={18}/> : <Moon size={18}/>}
-          </button>
+          <button onClick={downloadPDF} style={{ background: t.surface, border: `1px solid ${t.border}`, color: t.text, padding: "8px 15px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}><Download size={14}/> PDF</button>
+          <button onClick={() => setIsDark(!isDark)} style={{ background: t.surface, border: `1px solid ${t.border}`, color: t.text, padding: 8, borderRadius: "50%", cursor: "pointer" }}>{isDark ? <Sun size={18}/> : <Moon size={18}/>}</button>
         </div>
       </header>
 
-      {/* MAIN LAYOUT */}
-      <main style={{ flex: 1, display: "grid", gridTemplateColumns: isPreview ? "1fr" : "400px 1fr 350px", overflow: "hidden" }}>
+      <main style={{ flex: 1, display: "grid", gridTemplateColumns: isPreview ? "1fr" : "380px 1fr 320px", overflow: "hidden" }}>
         
         {!isPreview && (
           <aside style={{ padding: 30, borderRight: `1px solid ${t.border}`, overflowY: "auto", background: "rgba(0,0,0,0.05)" }}>
-            <div onClick={() => fileInputRef.current.click()} style={{ padding: "40px 20px", border: `2px dashed ${t.accent}`, borderRadius: 20, textAlign: "center", cursor: "pointer", background: t.surface, display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
-              <input type="file" ref={fileInputRef} hidden onChange={handleFileUpload} accept=".pdf,.txt,.md" />
-              <Upload size={32} color={t.accent} />
-              <div style={{ fontWeight: 800, fontSize: "14px" }}>{resume ? "CHANGE DOCUMENT" : "UPLOAD RESUME"}</div>
-              <p style={{ fontSize: "11px", opacity: 0.6 }}>PDF, TXT, or Markdown</p>
+            <div onClick={() => fileInputRef.current.click()} style={{ padding: "30px", border: `2px dashed ${t.accent}`, borderRadius: 20, textAlign: "center", cursor: "pointer", background: t.surface }}>
+              <input type="file" ref={fileInputRef} hidden onChange={handleFileUpload} accept=".pdf,.docx,.txt" />
+              <Upload size={24} color={t.accent} style={{ marginBottom: 10 }} />
+              <p style={{ fontSize: 12, fontWeight: 800 }}>{resume ? resume.name : "UPLOAD RESUME"}</p>
             </div>
-            
-            <div style={{ marginTop: 30 }}>
-              <p style={{ fontSize: 10, fontWeight: 800, color: t.textDim, marginBottom: 10 }}>JOB DESCRIPTION</p>
-              <textarea value={jdText} onChange={(e)=>setJdText(e.target.value)} placeholder="Paste the Job Description here..." style={{ width: "100%", height: 250, background: t.surface, border: `1px solid ${t.border}`, borderRadius: 12, padding: 15, color: t.text, fontSize: 13, outline: "none", resize: "none" }} />
-            </div>
-
-            <button onClick={handleAIGenerate} disabled={loading} style={{ width: "100%", marginTop: 25, padding: 16, background: t.accent, color: "#FFF", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
-              {loading ? <RefreshCw className="spin" size={20}/> : <Sparkles size={20}/>} {loading ? "OPTIMIZING..." : "RUN ATS SCAN"}
+            <textarea value={jdText} onChange={(e)=>setJdText(e.target.value)} placeholder="Paste Job Description..." style={{ width: "100%", height: 200, marginTop: 20, background: t.surface, border: `1px solid ${t.border}`, borderRadius: 12, padding: 15, color: t.text, outline: "none" }} />
+            <button onClick={handleAIGenerate} disabled={loading} style={{ width: "100%", marginTop: 20, padding: 16, background: t.accent, color: "#FFF", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>
+              {loading ? <RefreshCw className="spin" size={20}/> : "OPTIMIZE"}
             </button>
           </aside>
         )}
 
-        <section style={{ padding: isPreview ? "60px 0" : "40px", overflowY: "auto", background: t.canvas, display: "flex", justifyContent: "center" }}>
-          <div style={{ width: "100%", maxWidth: "800px", background: "#FFF", color: "#1E293B", padding: isPreview ? "80px" : "60px", borderRadius: isPreview ? "0" : "8px", minHeight: "1120px", boxShadow: isPreview ? "none" : "0 20px 40px rgba(0,0,0,0.1)", transition: "0.3s" }}>
-            <h1 style={{ margin: 0, fontSize: 32 }}>{resume ? resume.name.toUpperCase() : "UPLOAD A RESUME"}</h1>
+        <section style={{ padding: isPreview ? "40px 0" : "40px", overflowY: "auto", background: t.canvas, display: "flex", justifyContent: "center" }}>
+          <div ref={resumeRef} style={{ width: "100%", maxWidth: "800px", background: "#FFF", color: "#1E293B", padding: "80px", minHeight: "1120px", boxShadow: isPreview ? "none" : "0 20px 40px rgba(0,0,0,0.1)" }}>
+            <h1 style={{ margin: 0, fontSize: 32 }}>{resume ? resume.name.toUpperCase() : "NAME"}</h1>
             <hr style={{ margin: "30px 0", opacity: 0.1 }} />
-            <h4 style={{ color: t.accent, fontSize: 12, letterSpacing: 1 }}>EXECUTIVE SUMMARY</h4>
-            <p style={{ lineHeight: 1.8 }}>{transformed ? transformed.summary : (resume?.raw || "Your content will appear here after upload.")}</p>
+            <p style={{ lineHeight: 1.8 }}>{transformed ? transformed.summary : (resume?.raw || "Your content...")}</p>
           </div>
         </section>
 
         {!isPreview && (
           <aside style={{ padding: 30, borderLeft: `1px solid ${t.border}`, background: "rgba(0,0,0,0.05)" }}>
-            <p style={{ fontSize: 10, fontWeight: 800, color: t.textDim, marginBottom: 20 }}>ATS ANALYTICS</p>
-            {analysis ? (
-              <div style={{ padding: 30, background: t.surface, borderRadius: 20, textAlign: "center", border: `1px solid ${t.border}` }}>
-                <p style={{ fontSize: 48, fontWeight: 900, color: t.accent, margin: 0 }}>{analysis.atsScore}%</p>
-                <p style={{ fontSize: 10, color: t.textDim }}>MATCH SCORE</p>
-              </div>
-            ) : <p style={{ fontSize: 12, opacity: 0.5 }}>Run scan to see insights.</p>}
+            <p style={{ fontSize: 10, fontWeight: 800 }}>ATS SCORE</p>
+            {analysis && <div style={{ fontSize: 48, fontWeight: 900, color: t.accent }}>{analysis.atsScore}%</div>}
           </aside>
         )}
       </main>
